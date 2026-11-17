@@ -79,6 +79,19 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _safe_stdio(streams) -> None:
+    """Never crash on characters the console can't show (Windows pipes default to cp1252/GBK)."""
+    for stream in streams:
+        try:
+            enc = (stream.encoding or "").lower().replace("-", "")
+            if enc != "utf8" and not stream.isatty():
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            else:
+                stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="chatgpt-bridge",
@@ -125,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_cmd_stats)
 
     args = parser.parse_args(argv)
+    # `serve` speaks MCP on stdout, so only make stderr safe there.
+    _safe_stdio([sys.stderr] if args.cmd == "serve" else [sys.stdout, sys.stderr])
     if args.db is None:
         args.db = default_db_path()
     try:
