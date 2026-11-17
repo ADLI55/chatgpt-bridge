@@ -12,6 +12,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -105,11 +106,16 @@ def format_time(ts: float | None) -> str:
 # ---------------------------------------------------------------- import
 
 
-def build_index(conversations: Iterable[Conversation], db_path: Path, source: str = "") -> dict:
+def build_index(
+    conversations: Iterable[Conversation],
+    db_path: Path,
+    source: str = "",
+    source_mtime: float | None = None,
+) -> dict:
     """Write a fresh index to ``db_path`` (atomically replacing any old one)."""
     db_path = Path(db_path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = db_path.with_name(db_path.name + ".tmp")
+    tmp = db_path.with_name(f"{db_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.unlink(missing_ok=True)
 
     conn = sqlite3.connect(tmp)
@@ -154,6 +160,7 @@ def build_index(conversations: Iterable[Conversation], db_path: Path, source: st
             "schema_version": SCHEMA_VERSION,
             "imported_at": str(time.time()),
             "source": source,
+            "source_mtime": str(source_mtime or 0),
             "fts": "1" if fts else "0",
         }
         conn.executemany("INSERT INTO meta VALUES (?,?)", meta.items())
@@ -233,9 +240,11 @@ class History:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         if not self.db_path.exists():
             raise HistoryNotImported(
-                f"No ChatGPT history imported yet (expected {self.db_path}). "
-                "Export your data from ChatGPT (Settings -> Data controls -> Export data), "
-                "then run: chatgpt-bridge import <path-to-export.zip>"
+                "No ChatGPT history imported yet, and no export was found in the watched folders "
+                "(Downloads, Desktop, Documents). Ask the user to open "
+                "https://chatgpt.com/#settings/DataControls, click Export data, and download the ZIP "
+                "from the email OpenAI sends; it is imported automatically once it is in Downloads. "
+                "(Or import a file anywhere with import_chatgpt_export / `chatgpt-bridge import <path>`.)"
             )
         conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
@@ -245,6 +254,20 @@ class History:
             conn.close()
 
     # -- overview
+
+    def source_mtime(self) -> float:
+        """Modification time of the export the index was built from (0 if none)."""
+        if not self.db_path.exists():
+            return 0.0
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT value FROM meta WHERE key='source_mtime'").fetchone()
+        except sqlite3.Error:
+            return 0.0
+        try:
+            return float(row[0]) if row else 0.0
+        except ValueError:
+            return 0.0
 
     def stats(self) -> dict:
         with self._connect() as conn:

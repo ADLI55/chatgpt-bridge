@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 from mcp import Client, StdioServerParameters
 
+from conftest import write_export
+
 from chatgpt_bridge.server import create_server
+from chatgpt_bridge.store import History
 
 A = "aaaa1111-0000-0000-0000-000000000001"
 
@@ -44,6 +47,7 @@ def test_tools_listed(db):
         "list_chatgpt_conversations",
         "read_chatgpt_conversation",
         "ask_chatgpt",
+        "import_chatgpt_export",
     }
     assert tools["search_chatgpt_history"].annotations.read_only_hint is True
     assert "role" in tools["search_chatgpt_history"].input_schema["properties"]
@@ -114,3 +118,26 @@ def test_stdio_server_process(db):
 
     r = asyncio.run(go())
     assert not r.is_error and "Trip planning to Kyoto" in text(r)
+
+
+def test_search_auto_imports_a_downloaded_export(tmp_path, conversations, isolated_watch_dirs):
+    write_export(isolated_watch_dirs / "chatgpt-export.zip", conversations)
+    r = call(create_server(tmp_path / "fresh.db"), "search_chatgpt_history", {"query": "Kyoto"})
+    assert not r.is_error, text(r)
+    out = text(r)
+    assert "Auto-imported" in out and "Trip planning to Kyoto" in out
+
+
+def test_import_tool(tmp_path, conversations, isolated_watch_dirs):
+    db = tmp_path / "h.db"
+    elsewhere = write_export(tmp_path / "somewhere" / "my-export.zip", conversations[:1])
+    r = call(create_server(db), "import_chatgpt_export", {"path": str(elsewhere)})
+    assert not r.is_error and "Imported 1 conversations" in text(r)
+
+    r = call(create_server(db), "import_chatgpt_export", {})
+    assert r.is_error and "No ChatGPT export" in text(r)
+
+    write_export(isolated_watch_dirs / "newer.zip", conversations)
+    r = call(create_server(db), "import_chatgpt_export", {})
+    assert not r.is_error and "Imported 4 conversations" in text(r)
+    assert History(db).stats()["conversations"] == 4

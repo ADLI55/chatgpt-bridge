@@ -4,6 +4,7 @@ hidden reasoning, tool calls, images, Chinese text)."""
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -121,6 +122,27 @@ def make_conversations() -> list[dict]:
     d.text("assistant", "Add a btree on the filter column.")
     convs.append(d.build())
     return convs
+
+
+@pytest.fixture(autouse=True)
+def isolated_watch_dirs(tmp_path_factory, monkeypatch):
+    """Never let tests pick up a real export from the developer's Downloads folder."""
+    empty = tmp_path_factory.mktemp("nothing-to-watch")
+    monkeypatch.setenv("CHATGPT_BRIDGE_WATCH", str(empty))
+    monkeypatch.delenv("CHATGPT_BRIDGE_DB", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    return empty
+
+
+def write_export(path: Path, conversations: list[dict], mtime: float | None = None) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("conversations.json", json.dumps(conversations, ensure_ascii=False))
+        zf.writestr("chat.html", "<html></html>")
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
 
 
 @pytest.fixture

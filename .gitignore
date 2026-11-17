@@ -10,4 +10,4 @@ build/
 conversations*.json
 !tests/fixtures/*.json
 *.db
-*.db.tmp
+*.tmp

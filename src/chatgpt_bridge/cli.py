@@ -6,21 +6,43 @@ import argparse
 import sys
 from pathlib import Path
 
-from .store import History, HistoryNotImported, build_index, default_db_path, format_time
+from .store import History, HistoryNotImported, default_db_path, format_time
 
 
 def _cmd_import(args: argparse.Namespace) -> int:
-    from .parser import load_export
+    from .autoimport import find_latest_export, import_export, watch_dirs
 
-    src = Path(args.export).expanduser()
+    mtime = None
+    if args.export:
+        src = Path(args.export).expanduser()
+    else:
+        found = find_latest_export()
+        if not found:
+            folders = ", ".join(str(d) for d in watch_dirs())
+            raise FileNotFoundError(f"no ChatGPT export found in {folders}; pass the path explicitly")
+        src, mtime = found
     print(f"Reading {src} ...", file=sys.stderr)
-    conversations = load_export(src)
-    result = build_index(conversations, args.db, source=str(src.resolve()))
+    result = import_export(src, args.db, mtime)
     print(
         f"Imported {result['conversations']} conversations ({result['messages']} messages) "
         f"into {result['db']}" + ("" if result["fts"] else " [full-text index unavailable; using LIKE]")
     )
     return 0
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    from .setup_cmd import run_setup
+
+    return run_setup(
+        args.export,
+        db=args.db,
+        api_key=args.api_key,
+        model=args.model,
+        name=args.name,
+        scope=args.scope,
+        open_browser=not args.no_browser,
+        interactive=False if args.no_prompt else None,
+    )
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -70,8 +92,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    p = sub.add_parser(
+        "setup", help="one step: import the newest export and register with Claude Code"
+    )
+    p.add_argument("export", nargs="?", help="export ZIP/folder (default: newest in Downloads etc.)")
+    p.add_argument("--api-key", help="OpenAI API key for ask_chatgpt (default: $OPENAI_API_KEY)")
+    p.add_argument("--model", help="default OpenAI model for ask_chatgpt")
+    p.add_argument("--name", default="chatgpt", help="MCP server name in Claude Code")
+    p.add_argument("--scope", default="user", choices=["user", "local", "project"])
+    p.add_argument("--no-browser", action="store_true", help="don't open the ChatGPT export page")
+    p.add_argument("--no-prompt", action="store_true", help="don't ask for an API key")
+    p.set_defaults(func=_cmd_setup)
+
     p = sub.add_parser("import", help="index a ChatGPT data export (.zip, folder or conversations.json)")
-    p.add_argument("export")
+    p.add_argument("export", nargs="?", help="default: newest export in Downloads/Desktop/Documents")
     p.set_defaults(func=_cmd_import)
 
     p = sub.add_parser("serve", help="run the MCP server over stdio (what Claude Code launches)")
