@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+# never commit your own export or index
+*.zip
+conversations*.json
+!tests/fixtures/*.json
+*.db
+*.db.tmp
