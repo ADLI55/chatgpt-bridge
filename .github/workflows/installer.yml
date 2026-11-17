@@ -1,0 +1,65 @@
+name: installer
+
+# Runs the one-line installers on real machines with Claude Code installed and
+# checks that Claude Code can connect to the server afterwards.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Put a sample ChatGPT export in Downloads
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" - <<'PY'
+          import json, pathlib, zipfile
+          conv = {
+              "title": "Installer smoke test", "create_time": 1700000000, "update_time": 1700000100,
+              "conversation_id": "ffff0000-0000-0000-0000-000000000000", "current_node": "b",
+              "mapping": {
+                  "r": {"id": "r", "message": None, "parent": None, "children": ["a"]},
+                  "a": {"id": "a", "parent": "r", "children": ["b"], "message": {
+                      "author": {"role": "user"}, "create_time": 1700000010,
+                      "content": {"content_type": "text", "parts": ["京都有哪些寺庙值得去？"]}}},
+                  "b": {"id": "b", "parent": "a", "children": [], "message": {
+                      "author": {"role": "assistant"}, "create_time": 1700000020, "recipient": "all",
+                      "content": {"content_type": "text", "parts": ["金阁寺、伏见稻荷大社、清水寺。"]}}},
+              },
+          }
+          d = pathlib.Path.home() / "Downloads"
+          d.mkdir(exist_ok=True)
+          with zipfile.ZipFile(d / "chatgpt-export.zip", "w") as zf:
+              zf.writestr("conversations.json", json.dumps([conv], ensure_ascii=False))
+          PY
+      - name: Run install.sh
+        if: runner.os != 'Windows'
+        run: sh install.sh --no-browser
+      - name: Run install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell -ExecutionPolicy ByPass -File install.ps1 --no-browser
+      - name: Claude Code connects to the server
+        shell: bash
+        run: |
+          claude mcp get chatgpt | tee mcp.txt
+          grep -q "Connected" mcp.txt
+      - name: History was imported
+        shell: bash
+        run: |
+          BIN="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
+          PATH="$HOME/.local/bin:$BIN:$PATH" chatgpt-bridge search 京都 | tee out.txt
+          grep -q "Installer smoke test" out.txt
